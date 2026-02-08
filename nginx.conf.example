@@ -1,0 +1,27 @@
+# Nginx 反向代理配置示例
+#
+# 将此配置添加到你的博客 Nginx 配置文件中
+# 例如: /etc/nginx/conf.d/blog.example.com.conf
+
+location /webhook {
+    proxy_pass http://127.0.0.1:28080/webhook;
+
+    # 传递必要的请求头
+    proxy_pass_request_headers on;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # 传递 Gitea 签名头（重要）
+    proxy_set_header X-Gitea-Signature $http_x_gitea_signature;
+    proxy_set_header X-Gitea-Event $http_x_gitea_event;
+
+    # 增加超时时间（Astro 构建可能需要 2-5 分钟）
+    proxy_connect_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_read_timeout 600s;
+
+    # 禁用缓冲（实时返回响应）
+    proxy_buffering off;
+}

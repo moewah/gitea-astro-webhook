@@ -1,0 +1,19 @@
+[Unit]
+Description=Gitea Astro Webhook Service
+After=network.target
+
+[Service]
+Type=simple
+# ⚠️ 部署时请修改以下路径为实际路径
+WorkingDirectory=/opt/gitea-astro-webhook
+ExecStart=/usr/bin/node /opt/gitea-astro-webhook/webhook.js
+User=root
+Group=root
+EnvironmentFile=/opt/gitea-astro-webhook/.env
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

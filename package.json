@@ -1,0 +1,31 @@
+{
+  "name": "gitea-astro-webhook",
+  "version": "1.0.0",
+  "description": "Gitea Webhook 自动部署服务 - Astro 博客零依赖版本",
+  "type": "module",
+  "main": "webhook.js",
+  "scripts": {
+    "start": "node webhook.js"
+  },
+  "keywords": [
+    "gitea",
+    "webhook",
+    "astro",
+    "deploy",
+    "auto-deployment",
+    "zero-dependencies"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moewah/gitea-astro-webhook.git"
+  },
+  "bugs": {
+    "url": "https://github.com/moewah/gitea-astro-webhook/issues"
+  },
+  "homepage": "https://github.com/moewah/gitea-astro-webhook#readme"
+}
