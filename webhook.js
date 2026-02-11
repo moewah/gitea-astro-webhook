@@ -37,6 +37,14 @@ function loadEnv() {
   return config;
 }
 
+// 验证分支名格式，防止命令注入
+function isValidBranchName(branch) {
+  // Git 分支名规则：不能包含空格、..、以-结尾等
+  // 参考: https://git-scm.com/docs/git-check-ref-format
+  const branchPattern = /^(?!.*\.\.|.*[\s\\]$)[a-zA-Z0-9/_\-\.]+$/;
+  return branchPattern.test(branch) && branch.length <= 256;
+}
+
 const config = loadEnv();
 const {
   PORT = 28080,
@@ -51,6 +59,16 @@ if (!WEBHOOK_SECRET || !BLOG_PATH) {
   console.error('错误：请配置 .env 文件中的 WEBHOOK_SECRET 和 BLOG_PATH');
   process.exit(1);
 }
+
+// 验证分支名格式
+if (!isValidBranchName(GIT_BRANCH)) {
+  console.error(`错误：无效的分支名格式: ${GIT_BRANCH}`);
+  process.exit(1);
+}
+
+// ==================== 构建锁 ====================
+let isBuilding = false;
+let pendingBuild = false;
 
 // ==================== 日志工具 ====================
 const logFile = path.join(process.cwd(), 'logs', 'webhook.log');
@@ -75,10 +93,30 @@ async function log(level, message) {
 async function pullBlog() {
   await log('INFO', '开始拉取代码');
 
-  const { stdout, stderr } = await execAsync(`git fetch origin ${GIT_BRANCH} && git reset --hard origin/${GIT_BRANCH}`, {
+  // 检查是否有未提交的更改
+  const { stdout: statusOutput } = await execAsync('git status --porcelain', {
     cwd: BLOG_PATH,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
   });
+
+  if (statusOutput.trim()) {
+    await log('INFO', '检测到未提交的更改，使用 stash 暂存');
+    // stash 未提交的更改（包括未跟踪文件）
+    await execAsync('git stash push -u', {
+      cwd: BLOG_PATH,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    });
+  }
+
+  // 使用引号包裹分支名，防止命令注入
+  const { stdout, stderr } = await execAsync(
+    `git fetch origin "${GIT_BRANCH}" && git reset --hard "origin/${GIT_BRANCH}"`,
+    {
+      cwd: BLOG_PATH,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      shell: '/bin/bash'
+    }
+  );
 
   if (stderr && !stderr.includes('From')) {
     throw new Error(stderr);
@@ -178,7 +216,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const payload = JSON.parse(bodyStr);
+      let payload;
+      try {
+        payload = JSON.parse(bodyStr);
+      } catch (err) {
+        await log('ERROR', `无效的 JSON 请求体: ${err.message}`);
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+        return;
+      }
+
       const { ref, repository } = payload;
 
       // 检查分支
@@ -202,6 +249,15 @@ const server = http.createServer(async (req, res) => {
 
       // 异步执行构建（不阻塞响应）
       setImmediate(async () => {
+        // 防止并发构建
+        if (isBuilding) {
+          await log('INFO', '已有构建任务正在执行，将排队等待');
+          pendingBuild = true;
+          return;
+        }
+
+        isBuilding = true;
+
         try {
           await pullBlog();
           await installDependencies();
@@ -209,6 +265,26 @@ const server = http.createServer(async (req, res) => {
           await log('SUCCESS', '✅ 部署完成！');
         } catch (err) {
           await log('ERROR', `部署失败: ${err.message}`);
+        } finally {
+          isBuilding = false;
+
+          // 如果有待处理的构建请求，执行它
+          if (pendingBuild) {
+            pendingBuild = false;
+            await log('INFO', '开始执行排队的构建任务');
+            setImmediate(async () => {
+              try {
+                await pullBlog();
+                await installDependencies();
+                await buildBlog();
+                await log('SUCCESS', '✅ 部署完成！');
+              } catch (err) {
+                await log('ERROR', `部署失败: ${err.message}`);
+              } finally {
+                isBuilding = false;
+              }
+            });
+          }
         }
       });
 
