@@ -66,6 +66,18 @@ if (!isValidBranchName(GIT_BRANCH)) {
   process.exit(1);
 }
 
+// 验证 BLOG_PATH 是否为有效目录
+if (!fs.existsSync(BLOG_PATH)) {
+  console.error(`错误：BLOG_PATH 不存在: ${BLOG_PATH}`);
+  process.exit(1);
+}
+
+const blogPathStat = fs.statSync(BLOG_PATH);
+if (!blogPathStat.isDirectory()) {
+  console.error(`错误：BLOG_PATH 不是目录: ${BLOG_PATH}`);
+  process.exit(1);
+}
+
 // ==================== 构建锁 ====================
 let isBuilding = false;
 let pendingBuild = false;
@@ -228,8 +240,9 @@ const server = http.createServer(async (req, res) => {
 
       const { ref, repository } = payload;
 
-      // 检查分支
-      if (!ref || !ref.includes(GIT_BRANCH)) {
+      // 检查分支 - 精确匹配 refs/heads/<branch>
+      const expectedRef = `refs/heads/${GIT_BRANCH}`;
+      if (ref !== expectedRef) {
         await log('INFO', `跳过：非 ${GIT_BRANCH} 分支的推送 (${ref})`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: 'ignored', reason: 'wrong branch' }));
