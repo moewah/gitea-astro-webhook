@@ -6,47 +6,51 @@
 
 **这个项目适合你，如果**：
 
-- ✅ 你使用 **Astro** 构建静态博客
+- ✅ 你使用 **Astro** 构建静态博客/网站
 - ✅ 你使用 **Gitea** 托管代码（自建 Git 服务）
 - ✅ 博客服务器和 Gitea **在同一台机器**
 - ✅ 希望从**多个地方**（家里、公司）推送代码后自动构建
 - ✅ 需要**版本控制** + **自动部署**的一体化方案
+- ✅ 有**多个仓库/网站**需要分别自动部署
 - ✅ 追求**零依赖**、简单易维护的解决方案
 
 **实际应用场景**：
 
 ```
 家里电脑 ──┐
-           ├─→ Git Push → Gitea → Webhook → 自动构建 → 博客更新
+           ├─→ Git Push → Gitea → Webhook → 自动构建 → 博客/网站更新
 公司电脑 ──┘
 ```
+
+支持**单仓库单网站**，也支持**多仓库多网站**：一个 webhook 服务接收多个 Gitea 仓库的推送，根据仓库名自动部署到对应目录。
 
 **我的部署架构**：
 
 ```
-┌─────────────────────────────────────────────────┐
-│              服务器 (blog.example.com)           │
-│                                                  │
-│  ┌──────────────┐         ┌──────────────┐      │
-│  │   Gitea      │         │  Astro Blog  │      │
-│  │  :3000       │         │  :80/443     │      │
-│  │              │         │              │      │
-│  │  git仓库     │────────▶│  构建产物    │      │
-│  └──────┬───────┘         └──────────────┘      │
-│         │                                         │
-│         │ Webhook                                 │
-│         ▼                                         │
-│  ┌──────────────┐                                │
-│  │   Webhook    │                                │
-│  │   服务       │                                │
-│  │  :28080      │                                │
-│  └──────────────┘                                │
-│                                                  │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                   服务器 (blog.example.com)                   │
+│                                                               │
+│  ┌──────────────┐         ┌──────────────┐  ┌──────────────┐ │
+│  │   Gitea      │         │  Astro Blog  │  │  Astro Shop  │ │
+│  │  :3000       │         │  :80/443     │  │  另一个站点   │ │
+│  │              │         │              │  │              │ │
+│  │  git仓库     │────────▶│  构建产物    │  │  构建产物    │ │
+│  └──────┬───────┘         └──────────────┘  └──────────────┘ │
+│         │                                                     │
+│         │ Webhook                                             │
+│         ▼                                                     │
+│  ┌──────────────┐                                            │
+│  │   Webhook    │                                            │
+│  │   服务       │                                            │
+│  │  :28080      │                                            │
+│  └──────────────┘                                            │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
 
 外部访问：
 - Gitea: https://git.example.com
 - 博客: https://blog.example.com
+- 商城: https://shop.example.com
 ```
 
 **工作流程**：
@@ -67,6 +71,7 @@
 - ✅ **异步构建**：立即响应 Gitea，不超时，显示绿色✅
 - ✅ **签名验证**：兼容 Gitea 格式的 HMAC-SHA256 签名
 - ✅ **systemd 管理**：开机自启，崩溃自动重启
+- ✅ **多仓库支持**：一个服务可监听多个 Gitea 仓库，分别部署到不同目录
 - ✅ **完整日志**：journal + 文件双重日志
 - ✅ **实时进度**：通过 `journalctl` 查看构建过程
 - ✅ **Nginx 集成**：反向代理配置，支持 HTTPS
@@ -117,25 +122,40 @@ cp .env.example .env
 nano .env
 ```
 
-**配置示例**：
+**配置示例（多仓库模式）**：
 
 ```env
 # Webhook 服务端口
 PORT=28080
 
 # Gitea Webhook 密钥（下面会生成）
+# 所有仓库共用此密钥
+WEBHOOK_SECRET=your-webhook-secret-here
+
+# 多仓库配置：每个仓库映射到服务器上的一个目录
+REPOS_JSON='[
+  { "full_name": "username/blog", "path": "/home/wwwroot/blog", "branch": "main" },
+  { "full_name": "username/shop", "path": "/home/wwwroot/shop", "branch": "main" }
+]'
+
+# 日志级别：info | error
+LOG_LEVEL=info
+```
+
+**配置示例（单仓库模式，兼容旧版）**：
+
+```env
+# Webhook 服务端口
+PORT=28080
+
 WEBHOOK_SECRET=your-webhook-secret-here
 
 # 博客项目路径
 BLOG_PATH=/home/wwwroot/blog
 
-# Git 仓库地址（SSH 格式）
-GIT_REPO=ssh://git@git.example.com:222/username/blog.git
-
 # 监听的 Git 分支
 GIT_BRANCH=main
 
-# 日志级别：info | error
 LOG_LEVEL=info
 ```
 
@@ -239,6 +259,8 @@ sudo journalctl -u gitea-astro-webhook -f
 
 ### 6. 配置 Gitea Webhook
 
+为每个需要自动部署的仓库都添加一个 Webhook（URL 相同，服务会根据 `repository.full_name` 自动匹配对应目录）。
+
 在 Gitea 中：
 
 1. 打开仓库 → **设置** → **Webhooks**
@@ -247,7 +269,7 @@ sudo journalctl -u gitea-astro-webhook -f
    - **Content Type**: `application/json`
    - **Secret**: 粘贴 `.env` 中的 `WEBHOOK_SECRET`
    - **Events**: ✅ Push Events
-   - **Branch**: `main`
+   - **Branch**: `main`（或在 `REPOS_JSON` 中配置的对应分支）
 
 ---
 
@@ -305,14 +327,14 @@ sudo journalctl -u gitea-astro-webhook -f
 应该看到：
 
 ```
-[SUCCESS] 收到 push 事件: blog - main
-[INFO] 开始拉取代码
-[SUCCESS] 代码拉取完成
-[INFO] 开始安装依赖: pnpm install
-[SUCCESS] 依赖安装完成
-[INFO] 开始构建博客: pnpm build
-[SUCCESS] 博客构建完成
-[SUCCESS] ✅ 部署完成！
+[SUCCESS] [username/blog] 收到 push 事件: main
+[INFO] [username/blog] 开始拉取代码
+[SUCCESS] [username/blog] 代码拉取完成
+[INFO] [username/blog] 开始安装依赖: pnpm install
+[SUCCESS] [username/blog] 依赖安装完成
+[INFO] [username/blog] 开始构建博客: pnpm build
+[SUCCESS] [username/blog] 博客构建完成
+[SUCCESS] [username/blog] ✅ 部署完成！
 ```
 
 在 Gitea 查看 webhook 状态，应该显示**绿色✅**（不再是超时警告）。
@@ -417,6 +439,22 @@ ssh -T -p 222 git@git.example.com
 # 手动测试拉取
 cd /home/wwwroot/blog
 git fetch origin main
+```
+
+### REPOS_JSON 解析失败
+
+**问题**：启动时报错 `REPOS_JSON 不是有效的 JSON`
+
+**检查**：
+1. `REPOS_JSON` 必须是被单引号或双引号包裹的合法 JSON 数组
+2. 每项必须包含 `full_name`、`path`、`branch`
+3. JSON 字符串内不要出现未转义的换行或引号冲突
+
+**正确示例**：
+```env
+REPOS_JSON='[
+  { "full_name": "username/blog", "path": "/home/wwwroot/blog", "branch": "main" }
+]'
 ```
 
 ### 服务无法启动
